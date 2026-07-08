@@ -1,0 +1,16 @@
+services:
+  pii-filter:
+    build: .
+    container_name: pii-filter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:8088"
+    env_file:
+      - .env
+    volumes:
+      - ./models/privacy_filter:/app/models/privacy_filter
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

@@ -1,0 +1,12 @@
+.env
+.venv/
+.venv_broken_*/
+venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+models/
+vendor/
+dist/
+build/

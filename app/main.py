@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
+from html import escape
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -76,6 +77,23 @@ INDEX_HTML = """
       border-radius: 8px;
       background: #fff;
       font-size: 14px;
+    }
+    .header-actions {
+      display: grid;
+      gap: 10px;
+      justify-items: end;
+    }
+    .nav-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 180px;
+      border-radius: 8px;
+      padding: 11px 14px;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 700;
+      text-decoration: none;
     }
     .grid {
       display: grid;
@@ -170,7 +188,8 @@ INDEX_HTML = """
     }
     @media (max-width: 820px) {
       header, .grid, .controls, .meta { grid-template-columns: 1fr; display: grid; }
-      .status { width: 100%; }
+      .status, .nav-button { width: 100%; }
+      .header-actions { justify-items: stretch; }
     }
   </style>
 </head>
@@ -181,7 +200,10 @@ INDEX_HTML = """
         <h1>PII Filter Service</h1>
         <p>Вставьте текст, сервис локально замаскирует персональные данные и вернёт обезличенный результат.</p>
       </div>
-      <div id="health" class="status">Проверка статуса...</div>
+      <div class="header-actions">
+        <a class="nav-button" href="/documents">Документы</a>
+        <div id="health" class="status">Проверка статуса...</div>
+      </div>
     </header>
 
     <div class="grid">
@@ -192,7 +214,7 @@ email ivan.petrov@etm.ru, договор ETM-4421</textarea>
         <div class="controls">
           <div>
             <label for="apiKey">X-API-Key</label>
-            <input id="apiKey" type="password" value="change-me" autocomplete="off" />
+            <input id="apiKey" type="password" value="__API_KEY__" autocomplete="off" />
           </div>
           <button id="maskButton" type="button">Маскировать</button>
         </div>
@@ -314,12 +336,12 @@ if settings.cors_enabled:
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def index() -> HTMLResponse:
-    return HTMLResponse(INDEX_HTML)
+    return HTMLResponse(INDEX_HTML.replace("__API_KEY__", escape(settings.api_key or "")))
 
 
 @app.get("/documents", response_class=HTMLResponse, include_in_schema=False)
 async def documents() -> HTMLResponse:
-    return HTMLResponse(DOCUMENTS_HTML)
+    return HTMLResponse(DOCUMENTS_HTML.replace("__API_KEY__", escape(settings.api_key or "")))
 
 
 def validate_text_size(text: str, current_settings: Settings = settings) -> None:

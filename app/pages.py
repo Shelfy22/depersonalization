@@ -6,112 +6,117 @@ DOCUMENTS_HTML = """
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Document Redaction Review</title>
+  <title>PII Filter Service - Documents</title>
   <style>
     :root {
-      color-scheme: dark;
+      color-scheme: light;
       font-family: Inter, Segoe UI, Arial, sans-serif;
-      background: #07120b;
-      color: #edf7ef;
+      background: #f5f7fb;
+      color: #1f2937;
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at 15% 85%, rgba(65, 189, 172, .14), transparent 32%),
-        linear-gradient(135deg, #07120b 0%, #0d1911 45%, #08110b 100%);
-    }
+    body { margin: 0; }
     main {
-      width: min(1440px, 100%);
+      max-width: 1280px;
       margin: 0 auto;
-      padding: 28px 26px 38px;
+      padding: 32px 20px 48px;
     }
     header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    p { margin: 0; color: #667085; line-height: 1.5; }
+    .header-actions {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 22px;
-      align-items: end;
-      margin-bottom: 18px;
+      gap: 10px;
+      justify-items: end;
     }
-    .hello {
-      color: #91a394;
-      font-size: 13px;
+    .status {
+      min-width: 180px;
+      padding: 10px 12px;
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 14px;
+    }
+    .nav-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 180px;
+      border-radius: 8px;
+      padding: 11px 14px;
+      background: #2563eb;
+      color: #fff;
       font-weight: 700;
-      margin-bottom: 3px;
-    }
-    h1 {
-      margin: 0;
-      font-size: 32px;
-      line-height: 1.05;
-      letter-spacing: 0;
+      text-decoration: none;
     }
     .stats {
       display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
+      margin-bottom: 16px;
     }
     .stat {
-      border: 1px solid rgba(255, 255, 255, .08);
+      border: 1px solid #d0d5dd;
       border-radius: 8px;
-      background: rgba(255, 255, 255, .045);
-      padding: 10px 12px;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .02);
+      background: #fff;
+      padding: 12px;
     }
     .stat strong {
       display: block;
-      font-size: 22px;
+      font-size: 24px;
       line-height: 1;
       margin-bottom: 4px;
     }
     .stat span {
-      color: #8fa194;
-      font-size: 11px;
-      font-weight: 800;
+      color: #667085;
+      font-size: 12px;
+      font-weight: 700;
       text-transform: uppercase;
     }
     .layout {
       display: grid;
-      grid-template-columns: 280px 340px minmax(0, 1fr);
-      gap: 14px;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 16px;
       align-items: start;
     }
-    .panel {
-      border: 1px solid rgba(255, 255, 255, .08);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, .045);
-      box-shadow: 0 20px 55px rgba(0, 0, 0, .28);
-      padding: 14px;
+    .side {
+      display: grid;
+      gap: 16px;
     }
-    .panel-head {
+    section {
+      background: #fff;
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .section-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
       margin-bottom: 12px;
     }
-    h2 {
-      margin: 0;
-      font-size: 16px;
-      line-height: 1.2;
-    }
-    .badge {
-      border-radius: 999px;
-      background: rgba(77, 207, 157, .16);
-      color: #7ee3b8;
-      padding: 5px 10px;
-      font-size: 11px;
-      font-weight: 800;
+    h2 { margin: 0; font-size: 16px; }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
     }
     .dropzone {
-      min-height: 116px;
-      border: 1px dashed rgba(255, 255, 255, .16);
+      min-height: 132px;
+      border: 1px dashed #98a2b3;
       border-radius: 8px;
       display: grid;
       place-items: center;
       text-align: center;
       padding: 18px;
-      background: rgba(255, 255, 255, .035);
+      background: #f8fafc;
       cursor: pointer;
     }
     .dropzone input { display: none; }
@@ -119,76 +124,47 @@ DOCUMENTS_HTML = """
       display: block;
       margin-bottom: 8px;
       font-size: 16px;
+      color: #111827;
     }
     .dropzone span {
-      color: #98a79b;
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .file-name {
-      margin: 10px 0 0;
-      min-height: 18px;
-      color: #b7c6ba;
-      font-size: 12px;
-      overflow-wrap: anywhere;
-    }
-    label {
-      display: block;
-      margin: 12px 0 7px;
-      color: #dce8df;
-      font-size: 12px;
-      font-weight: 800;
+      color: #667085;
+      font-size: 13px;
+      font-weight: 600;
     }
     input[type="password"] {
       width: 100%;
-      border: 1px solid rgba(255, 255, 255, .12);
+      border: 1px solid #cbd5e1;
       border-radius: 8px;
-      padding: 10px 11px;
-      background: rgba(0, 0, 0, .2);
-      color: #fff;
+      padding: 11px 12px;
       font: inherit;
+      color: #111827;
+      background: #fff;
     }
     button {
       border: 0;
       border-radius: 8px;
-      padding: 11px 14px;
-      font-weight: 900;
+      padding: 12px 18px;
+      font-weight: 700;
       cursor: pointer;
-      background: #45c6b8;
-      color: #08211d;
-      box-shadow: 0 8px 20px rgba(69, 198, 184, .18);
+      background: #2563eb;
+      color: #fff;
     }
     button.secondary {
-      background: rgba(255, 255, 255, .07);
-      color: #e8f2ea;
-      box-shadow: none;
-      border: 1px solid rgba(255, 255, 255, .08);
+      background: #fff;
+      color: #344054;
+      border: 1px solid #d0d5dd;
     }
     button:disabled {
-      opacity: .55;
       cursor: wait;
+      opacity: .65;
     }
-    .full { width: 100%; margin-top: 10px; }
-    .tabs {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      padding: 4px;
-      border: 1px solid rgba(255, 255, 255, .08);
-      border-radius: 8px;
-      background: rgba(0, 0, 0, .18);
-      margin-bottom: 12px;
-    }
-    .tab {
-      padding: 8px;
-      border-radius: 6px;
-      text-align: center;
-      font-weight: 800;
-      color: #98a79b;
-    }
-    .tab.active {
-      background: rgba(255, 255, 255, .08);
-      color: #effaf1;
+    .full { width: 100%; margin-top: 12px; }
+    .file-name {
+      margin: 10px 0 12px;
+      min-height: 18px;
+      color: #667085;
+      font-size: 13px;
+      overflow-wrap: anywhere;
     }
     .doc-list {
       display: grid;
@@ -196,40 +172,50 @@ DOCUMENTS_HTML = """
       min-height: 44px;
     }
     .doc-item {
-      border: 1px solid rgba(255, 255, 255, .08);
+      border: 1px solid #e5e7eb;
       border-radius: 8px;
       padding: 10px;
-      background: rgba(0, 0, 0, .18);
+      background: #f8fafc;
       cursor: pointer;
     }
     .doc-item.active {
-      border-color: rgba(69, 198, 184, .8);
-      background: rgba(69, 198, 184, .1);
+      border-color: #2563eb;
+      background: #eff6ff;
     }
     .doc-name {
-      font-weight: 850;
+      font-weight: 700;
       overflow-wrap: anywhere;
     }
     .doc-meta {
       margin-top: 5px;
-      color: #95a69a;
+      color: #667085;
       font-size: 12px;
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
     }
     .review {
-      min-height: 520px;
+      min-height: 560px;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
     }
+    .actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
     .empty {
-      min-height: 410px;
+      min-height: 420px;
       display: grid;
       place-items: center;
       text-align: center;
-      color: #9baa9e;
-      font-weight: 700;
+      color: #667085;
+      font-weight: 600;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
     }
     .review-grid {
       display: grid;
@@ -245,7 +231,7 @@ DOCUMENTS_HTML = """
     .text-box h3 {
       margin: 0 0 8px;
       font-size: 13px;
-      color: #cfe1d3;
+      color: #475467;
     }
     pre {
       margin: 0;
@@ -255,10 +241,10 @@ DOCUMENTS_HTML = """
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, .08);
-      background: rgba(0, 0, 0, .24);
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
       padding: 12px;
-      color: #e9f5ed;
+      color: #111827;
       font: 13px/1.5 Consolas, ui-monospace, monospace;
     }
     .entity-row {
@@ -270,33 +256,26 @@ DOCUMENTS_HTML = """
     .entity-pill {
       border-radius: 999px;
       padding: 5px 8px;
-      background: rgba(255, 255, 255, .08);
-      color: #d7e6da;
+      background: #eef2ff;
+      color: #3730a3;
       font-size: 12px;
-      font-weight: 800;
-    }
-    .actions {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-      margin-bottom: 12px;
+      font-weight: 700;
     }
     .error {
-      margin-top: 10px;
-      color: #ffb4a8;
-      font-size: 13px;
+      margin-top: 12px;
+      color: #b42318;
+      font-weight: 600;
       white-space: pre-wrap;
     }
-    @media (max-width: 1100px) {
-      .layout { grid-template-columns: 1fr; }
-      header { grid-template-columns: 1fr; }
-      .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    @media (max-width: 980px) {
+      header, .layout { grid-template-columns: 1fr; display: grid; }
+      .header-actions { justify-items: stretch; }
+      .status, .nav-button { width: 100%; }
     }
     @media (max-width: 760px) {
-      main { padding: 18px 12px 30px; }
+      main { padding: 20px 12px 34px; }
       .stats, .review-grid { grid-template-columns: 1fr; }
-      h1 { font-size: 27px; }
+      .actions { align-items: stretch; flex-direction: column; }
     }
   </style>
 </head>
@@ -304,64 +283,66 @@ DOCUMENTS_HTML = """
   <main>
     <header>
       <div>
-        <div class="hello">Local PII Filter</div>
-        <h1>Redaction Review</h1>
+        <h1>PII Filter Service</h1>
+        <p>Загрузите текстовый документ, сервис локально прочитает файл в браузере и вернёт обезличенный результат.</p>
       </div>
-      <div class="stats">
-        <div class="stat"><strong id="documentsCount">0</strong><span>Documents</span></div>
-        <div class="stat"><strong id="needsReviewCount">0</strong><span>Needs review</span></div>
-        <div class="stat"><strong id="reviewedCount">0</strong><span>Reviewed</span></div>
+      <div class="header-actions">
+        <a class="nav-button" href="/">Вставить текст</a>
+        <div id="opfBadge" class="status">Проверка статуса...</div>
       </div>
     </header>
 
+    <div class="stats">
+      <div class="stat"><strong id="documentsCount">0</strong><span>Documents</span></div>
+      <div class="stat"><strong id="needsReviewCount">0</strong><span>Needs review</span></div>
+      <div class="stat"><strong id="reviewedCount">0</strong><span>Reviewed</span></div>
+    </div>
+
     <div class="layout">
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Add Document</h2>
-          <span class="badge" id="opfBadge">OPF checking</span>
-        </div>
-        <label class="dropzone" for="fileInput">
-          <input id="fileInput" type="file" accept=".txt,.md,.csv,.json,.log,.rtf,text/*,application/json" />
-          <span>
-            <strong>Choose file</strong>
-            <span>TXT, MD, CSV, JSON, LOG, RTF</span>
-          </span>
-        </label>
-        <p class="file-name" id="fileName">No file selected</p>
-        <label for="apiKey">X-API-Key</label>
-        <input id="apiKey" type="password" value="change-me" autocomplete="off" />
-        <button class="full" id="redactButton" type="button">Add and Redact</button>
-        <div class="error" id="errorBox" hidden></div>
-      </section>
+      <div class="side">
+        <section>
+          <div class="section-head">
+            <h2>Добавить документ</h2>
+          </div>
+          <label class="dropzone" for="fileInput">
+            <input id="fileInput" type="file" accept=".txt,.md,.csv,.json,.log,.rtf,text/*,application/json" />
+            <span>
+              <strong>Выбрать файл</strong>
+              <span>TXT, MD, CSV, JSON, LOG, RTF</span>
+            </span>
+          </label>
+          <p class="file-name" id="fileName">Файл не выбран</p>
+          <label for="apiKey">X-API-Key</label>
+          <input id="apiKey" type="password" value="__API_KEY__" autocomplete="off" />
+          <button class="full" id="redactButton" type="button">Обезличить документ</button>
+          <div class="error" id="errorBox" hidden></div>
+        </section>
 
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Documents</h2>
-          <button class="secondary" id="clearButton" type="button">Clear</button>
-        </div>
-        <div class="tabs">
-          <div class="tab active">Active</div>
-          <div class="tab">Archived</div>
-        </div>
-        <div class="doc-list" id="documentList">
-          <div class="doc-item"><div class="doc-name">No active documents</div></div>
-        </div>
-      </section>
+        <section>
+          <div class="section-head">
+            <h2>Документы</h2>
+            <button class="secondary" id="clearButton" type="button">Очистить</button>
+          </div>
+          <div class="doc-list" id="documentList">
+            <div class="doc-item"><div class="doc-name">Нет активных документов</div></div>
+          </div>
+        </section>
+      </div>
 
-      <section class="panel review">
+      <section class="review">
         <div class="actions">
-          <h2 id="reviewTitle">No document selected</h2>
-          <button class="secondary" id="downloadButton" type="button" disabled>Download result</button>
+          <h2 id="reviewTitle">Документ не выбран</h2>
+          <button class="secondary" id="downloadButton" type="button" disabled>Скачать результат</button>
         </div>
-        <div id="reviewEmpty" class="empty">Import a file to start review.</div>
+        <div id="reviewEmpty" class="empty">Загрузите файл, чтобы начать проверку.</div>
         <div id="reviewContent" hidden>
           <div class="review-grid">
             <div class="text-box">
-              <h3>Original text</h3>
+              <h3>Исходный текст</h3>
               <pre id="originalText"></pre>
             </div>
             <div class="text-box">
-              <h3>Redacted text</h3>
+              <h3>Обезличенный текст</h3>
               <pre id="redactedText"></pre>
             </div>
           </div>
@@ -395,16 +376,16 @@ DOCUMENTS_HTML = """
     let selectedId = null;
 
     fileInput.addEventListener("change", () => {
-      fileName.textContent = fileInput.files[0]?.name || "No file selected";
+      fileName.textContent = fileInput.files[0]?.name || "Файл не выбран";
     });
 
     async function refreshHealth() {
       try {
         const response = await fetch("/health");
         const data = await response.json();
-        opfBadge.textContent = data.model_loaded ? "OPF active" : "OPF inactive";
+        opfBadge.textContent = `status=${data.status}, model_loaded=${data.model_loaded}, device=${data.device}`;
       } catch {
-        opfBadge.textContent = "OPF unknown";
+        opfBadge.textContent = "Статус недоступен";
       }
     }
 
@@ -418,7 +399,7 @@ DOCUMENTS_HTML = """
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(new Error("Could not read file"));
+        reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
         reader.readAsText(file, "utf-8");
       });
     }
@@ -426,12 +407,12 @@ DOCUMENTS_HTML = """
     async function redactDocument() {
       const file = fileInput.files[0];
       if (!file) {
-        showError("Choose a text file first.");
+        showError("Сначала выберите текстовый файл.");
         return;
       }
       errorBox.hidden = true;
       redactButton.disabled = true;
-      redactButton.textContent = "Redacting...";
+      redactButton.textContent = "Обезличивание...";
       try {
         const text = await readFileAsText(file);
         const response = await fetch("/mask", {
@@ -463,13 +444,13 @@ DOCUMENTS_HTML = """
         documents.unshift(doc);
         selectedId = doc.id;
         fileInput.value = "";
-        fileName.textContent = "No file selected";
+        fileName.textContent = "Файл не выбран";
         render();
       } catch (error) {
         showError(error.message);
       } finally {
         redactButton.disabled = false;
-        redactButton.textContent = "Add and Redact";
+        redactButton.textContent = "Обезличить документ";
       }
     }
 
@@ -484,7 +465,7 @@ DOCUMENTS_HTML = """
       reviewedCount.textContent = documents.filter((doc) => doc.reviewed).length;
 
       if (!documents.length) {
-        documentList.innerHTML = '<div class="doc-item"><div class="doc-name">No active documents</div></div>';
+        documentList.innerHTML = '<div class="doc-item"><div class="doc-name">Нет активных документов</div></div>';
       } else {
         documentList.innerHTML = documents.map((doc) => `
           <div class="doc-item ${doc.id === selectedId ? "active" : ""}" data-id="${doc.id}">
@@ -505,7 +486,7 @@ DOCUMENTS_HTML = """
 
       const selected = documents.find((doc) => doc.id === selectedId);
       if (!selected) {
-        reviewTitle.textContent = "No document selected";
+        reviewTitle.textContent = "Документ не выбран";
         reviewEmpty.hidden = false;
         reviewContent.hidden = true;
         downloadButton.disabled = true;
@@ -519,7 +500,7 @@ DOCUMENTS_HTML = """
       redactedText.textContent = selected.redacted;
       entitySummary.innerHTML = selected.entities.length
         ? selected.entities.map((entity) => `<span class="entity-pill">${entity.type}: ${entity.placeholder}</span>`).join("")
-        : '<span class="entity-pill">No entities found</span>';
+        : '<span class="entity-pill">Сущности не найдены</span>';
     }
 
     function escapeHtml(value) {

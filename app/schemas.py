@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class EntityType(StrEnum):
+class EntityType(str, Enum):
     PRIVATE_PERSON = "PRIVATE_PERSON"
     PRIVATE_PHONE = "PRIVATE_PHONE"
     PRIVATE_EMAIL = "PRIVATE_EMAIL"

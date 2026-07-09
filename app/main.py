@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 from app.config import Settings, get_settings
 from app.logging_config import configure_logging
 from app.masker import TextMasker
+from app.pages import DOCUMENTS_HTML
 from app.privacy_filter_engine import PrivacyFilterEngine
 from app.schemas import (
     BatchMaskItemResponse,
@@ -314,6 +315,11 @@ if settings.cors_enabled:
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def index() -> HTMLResponse:
     return HTMLResponse(INDEX_HTML)
+
+
+@app.get("/documents", response_class=HTMLResponse, include_in_schema=False)
+async def documents() -> HTMLResponse:
+    return HTMLResponse(DOCUMENTS_HTML)
 
 
 def validate_text_size(text: str, current_settings: Settings = settings) -> None:

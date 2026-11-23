@@ -1,1 +1,1 @@
-"""PII filter service package."""
+"""Russian document anonymization service."""

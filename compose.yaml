@@ -1,0 +1,31 @@
+services:
+  anonymizer:
+    build:
+      context: .
+      args:
+        # For GLiNER use gliner,pdf and set ANON_ENABLE_GLINER=true.
+        INSTALL_EXTRAS: ${INSTALL_EXTRAS:-ml,pdf}
+    env_file: .env
+    environment:
+      HF_HOME: /models
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - model-cache:/models
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+
+volumes:
+  model-cache:

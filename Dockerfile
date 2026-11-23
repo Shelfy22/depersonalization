@@ -1,26 +1,16 @@
 FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
-
-WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl git \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
-
-# In closed networks, copy or mount a local checkout of https://github.com/openai/privacy-filter
-# and install it into the image during your internal build process.
-# Example:
-# COPY vendor/privacy-filter /opt/privacy-filter
-# RUN pip install -e /opt/privacy-filter
-
+ARG INSTALL_EXTRAS=ml,pdf
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    HF_HOME=/models HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 \
+    ANON_LOCAL_FILES_ONLY=true
+WORKDIR /service
+COPY pyproject.toml ./
 COPY app ./app
-
-EXPOSE 8088
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8088"]
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6,<3' \
+    && pip install --no-cache-dir ".[${INSTALL_EXTRAS}]" \
+    && useradd --create-home --uid 10001 service \
+    && mkdir /models && chown service:service /models
+COPY scripts ./scripts
+USER service
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

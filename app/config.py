@@ -1,50 +1,36 @@
-from __future__ import annotations
-
-import os
-from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-load_dotenv()
-
-
-def _get_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+load_dotenv(override=False)
 
 
-def _get_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return int(value)
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="ANON_", env_file=".env", extra="ignore")
 
-
-@dataclass(frozen=True)
-class Settings:
-    api_key: str | None = os.getenv("PII_FILTER_API_KEY")
-    allow_no_auth: bool = _get_bool("ALLOW_NO_AUTH", False)
-    model_path: str | None = os.getenv("MODEL_PATH")
-    opf_checkpoint: str | None = os.getenv("OPF_CHECKPOINT")
-    device: str = os.getenv("DEVICE", "cpu")
-    max_text_length: int = _get_int("MAX_TEXT_LENGTH", 50_000)
-    log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    return_raw_entities_allowed: bool = _get_bool("RETURN_RAW_ENTITIES_ALLOWED", False)
-    cors_enabled: bool = _get_bool("CORS_ENABLED", False)
-    cors_origins: tuple[str, ...] = tuple(
-        origin.strip()
-        for origin in os.getenv("CORS_ORIGINS", "").split(",")
-        if origin.strip()
-    )
-    model_enabled: bool = _get_bool("MODEL_ENABLED", True)
-    opf_subprocess_timeout_seconds: int = _get_int("OPF_SUBPROCESS_TIMEOUT_SECONDS", 120)
-
-    @property
-    def checkpoint(self) -> str | None:
-        return self.opf_checkpoint or self.model_path
-
-
-def get_settings() -> Settings:
-    return Settings()
+    api_key: SecretStr = SecretStr("")
+    default_profile: Literal["rules", "rubert", "gliner", "hybrid"] = "rubert"
+    enable_rubert: bool = True
+    enable_gliner: bool = False
+    rubert_model: str = "redmadrobot-rnd/rubert-base-pii-ner"
+    rubert_revision: str = "main"
+    gliner_model: str = "urchade/gliner_multi_pii-v1"
+    gliner_revision: str = "main"
+    local_files_only: bool = True
+    device: str = "cpu"
+    torch_threads: int = Field(default=4, ge=1, le=64)
+    rubert_threshold: float = Field(default=0.45, ge=0, le=1)
+    gliner_threshold: float = Field(default=0.5, ge=0, le=1)
+    max_text_chars: int = Field(default=100_000, ge=1)
+    max_document_chars: int = Field(default=2_000_000, ge=1)
+    max_upload_mb: int = Field(default=25, ge=1, le=200)
+    max_unpacked_mb: int = Field(default=150, ge=1, le=500)
+    max_pages: int = Field(default=500, ge=1)
+    max_cells: int = Field(default=200_000, ge=1)
+    queue_size: int = Field(default=4, ge=1, le=32)
+    max_jobs: int = Field(default=32, ge=1, le=1000)
+    job_ttl_seconds: int = Field(default=1800, ge=10)
+    dictionary_path: Path = Path("data/dictionaries.json")

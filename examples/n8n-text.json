@@ -1,0 +1,57 @@
+{
+  "name": "Local Russian PII filter before LLM",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-start",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: {text: 'Иванов Иван Иванович, почта ivan@example.ru', profile: 'rubert'}}];"
+      },
+      "id": "sample-message",
+      "name": "Sample message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://anonymizer:8000/v1/anonymize",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {text: $json.text, profile: $json.profile} }}",
+        "options": {"timeout": 120000}
+      },
+      "id": "filter-message",
+      "name": "Anonymize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "if (typeof $json.text !== 'string' || !$json.profile) throw new Error('Anonymization result required'); return [{json: {messages: [{role: 'user', content: $json.text}]}}];"
+      },
+      "id": "prepare-payload",
+      "name": "Build LLM payload from filtered text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 0]
+    }
+  ],
+  "connections": {
+    "Start": {"main": [[{"node": "Sample message", "type": "main", "index": 0}]]},
+    "Sample message": {"main": [[{"node": "Anonymize", "type": "main", "index": 0}]]},
+    "Anonymize": {"main": [[{"node": "Build LLM payload from filtered text", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}

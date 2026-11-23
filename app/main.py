@@ -1,417 +1,235 @@
-from __future__ import annotations
-
-import logging
-import time
+import hmac
 from contextlib import asynccontextmanager
-from html import escape
-from uuid import uuid4
+from pathlib import PurePath
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, Form, Request, Security, UploadFile
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from fastapi.security import APIKeyHeader
+from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
-from app.config import Settings, get_settings
-from app.logging_config import configure_logging
-from app.masker import TextMasker
-from app.pages import DOCUMENTS_HTML
-from app.privacy_filter_engine import PrivacyFilterEngine
+from app.config import Settings
+from app.engine import DetectionEngine
+from app.errors import ServiceError
+from app.jobs import JobManager
 from app.schemas import (
-    BatchMaskItemResponse,
-    BatchMaskRequest,
-    BatchMaskResponse,
-    HealthResponse,
-    MaskRequest,
-    MaskResponse,
+    DictionaryEntries,
+    DictionaryUpsert,
+    DocumentOptions,
+    EntityType,
+    TextRequest,
+    TextResponse,
 )
-from app.security import require_api_key
-
-settings = get_settings()
-configure_logging(settings.log_level)
-logger = logging.getLogger(__name__)
-privacy_filter = PrivacyFilterEngine(settings)
-masker = TextMasker(settings, privacy_filter)
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    privacy_filter.load()
-    yield
+class BoundaryMiddleware:
+    """Authenticate and bound the actual body before JSON/multipart parsing."""
+
+    def __init__(self, app, settings):
+        self.app, self.settings = app, settings
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        protected = scope["path"].startswith("/v1")
+        headers = dict(scope["headers"])
+        if protected:
+            supplied = headers.get(b"x-api-key", b"")
+            expected = self.settings.api_key.get_secret_value().encode()
+            if not expected or not hmac.compare_digest(supplied, expected):
+                return await JSONResponse({"error": "unauthorized"}, 401)(scope, receive, send)
+        limit = (
+            self.settings.max_upload_mb * 1024**2 + 128 * 1024
+            if scope["path"] == "/v1/documents"
+            else self.settings.max_text_chars * 8 + 128 * 1024
+        )
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body.extend(message.get("body", b""))
+            if len(body) > limit:
+                return await JSONResponse({"error": "request_body_limit_exceeded"}, 413)(scope, receive, send)
+            if not message.get("more_body", False):
+                break
+        delivered = False
+
+        async def bounded_receive():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return await receive()
+
+        async def private_send(message):
+            if message["type"] == "http.response.start":
+                message["headers"] = list(message["headers"]) + [
+                    (b"cache-control", b"no-store"),
+                    (b"x-content-type-options", b"nosniff"),
+                ]
+            await send(message)
+
+        await self.app(scope, bounded_receive, private_send)
 
 
-app = FastAPI(title="PII Filter Service", version="0.1.0", lifespan=lifespan)
+def create_app(settings: Settings | None = None, engine: DetectionEngine | None = None):
+    settings = settings or Settings()
 
-INDEX_HTML = """
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PII Filter Service</title>
-  <style>
-    :root {
-      color-scheme: light;
-      font-family: Inter, Segoe UI, Arial, sans-serif;
-      background: #f5f7fb;
-      color: #1f2937;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; }
-    main {
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 32px 20px 48px;
-    }
-    header {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: flex-start;
-      margin-bottom: 24px;
-    }
-    h1 { margin: 0 0 8px; font-size: 28px; }
-    p { margin: 0; color: #667085; line-height: 1.5; }
-    .status {
-      min-width: 180px;
-      padding: 10px 12px;
-      border: 1px solid #d0d5dd;
-      border-radius: 8px;
-      background: #fff;
-      font-size: 14px;
-    }
-    .header-actions {
-      display: grid;
-      gap: 10px;
-      justify-items: end;
-    }
-    .nav-button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 180px;
-      border-radius: 8px;
-      padding: 11px 14px;
-      background: #2563eb;
-      color: #fff;
-      font-weight: 700;
-      text-decoration: none;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 16px;
-    }
-    section {
-      background: #fff;
-      border: 1px solid #d0d5dd;
-      border-radius: 8px;
-      padding: 16px;
-    }
-    label {
-      display: block;
-      margin-bottom: 8px;
-      font-weight: 600;
-    }
-    textarea, input {
-      width: 100%;
-      border: 1px solid #cbd5e1;
-      border-radius: 8px;
-      padding: 11px 12px;
-      font: inherit;
-      color: #111827;
-      background: #fff;
-    }
-    textarea {
-      min-height: 320px;
-      resize: vertical;
-      line-height: 1.45;
-    }
-    .controls {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 12px;
-      align-items: end;
-      margin-top: 12px;
-    }
-    button {
-      border: 0;
-      border-radius: 8px;
-      padding: 12px 18px;
-      font-weight: 700;
-      cursor: pointer;
-      background: #2563eb;
-      color: #fff;
-    }
-    button:disabled {
-      cursor: wait;
-      opacity: .65;
-    }
-    .output {
-      min-height: 116px;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      padding: 12px;
-      border-radius: 8px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      line-height: 1.5;
-    }
-    .meta {
-      margin-top: 12px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-    }
-    .pill {
-      border-radius: 8px;
-      background: #eef2ff;
-      padding: 10px;
-      font-size: 13px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 12px;
-      font-size: 13px;
-    }
-    th, td {
-      padding: 8px;
-      text-align: left;
-      border-bottom: 1px solid #e5e7eb;
-      vertical-align: top;
-    }
-    th { color: #475467; }
-    .error {
-      margin-top: 12px;
-      color: #b42318;
-      font-weight: 600;
-      white-space: pre-wrap;
-    }
-    @media (max-width: 820px) {
-      header, .grid, .controls, .meta { grid-template-columns: 1fr; display: grid; }
-      .status, .nav-button { width: 100%; }
-      .header-actions { justify-items: stretch; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>PII Filter Service</h1>
-        <p>Вставьте текст, сервис локально замаскирует персональные данные и вернёт обезличенный результат.</p>
-      </div>
-      <div class="header-actions">
-        <a class="nav-button" href="/documents">Документы</a>
-        <div id="health" class="status">Проверка статуса...</div>
-      </div>
-    </header>
+    @asynccontextmanager
+    async def lifespan(application):
+        if len(settings.api_key.get_secret_value()) < 24:
+            raise RuntimeError("Set ANON_API_KEY to a random secret of at least 24 characters")
+        # Loading failure stops startup: never silently fall back to regex-only filtering.
+        application.state.engine = engine or await run_in_threadpool(DetectionEngine, settings)
+        application.state.jobs = JobManager(application.state.engine)
+        yield
+        application.state.jobs.close()
 
-    <div class="grid">
-      <section>
-        <label for="sourceText">Исходный текст</label>
-        <textarea id="sourceText">Позвони Ивану Петрову +7 999 123-45-67,
-email ivan.petrov@etm.ru, договор ETM-4421</textarea>
-        <div class="controls">
-          <div>
-            <label for="apiKey">X-API-Key</label>
-            <input id="apiKey" type="password" value="__API_KEY__" autocomplete="off" />
-          </div>
-          <button id="maskButton" type="button">Маскировать</button>
-        </div>
-        <div id="error" class="error" hidden></div>
-      </section>
+    application = FastAPI(
+        title="Russian PII Filter",
+        version="0.1.0",
+        lifespan=lifespan,
+        dependencies=[Security(APIKeyHeader(name="X-API-Key", auto_error=False))],
+    )
+    application.add_middleware(BoundaryMiddleware, settings=settings)
 
-      <section>
-        <label>Обезличенный текст</label>
-        <div id="maskedText" class="output">Результат появится здесь.</div>
-        <div class="meta">
-          <div class="pill">Сущностей: <strong id="entitiesCount">0</strong></div>
-          <div class="pill">Модель: <strong id="modelUsed">-</strong></div>
-          <div class="pill">Regex: <strong id="regexUsed">-</strong></div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Тип</th>
-              <th>Placeholder</th>
-              <th>Источник</th>
-              <th>Span</th>
-            </tr>
-          </thead>
-          <tbody id="entitiesTable">
-            <tr><td colspan="4">Пока нет данных.</td></tr>
-          </tbody>
-        </table>
-      </section>
-    </div>
-  </main>
+    @application.exception_handler(ServiceError)
+    async def service_error(request, exc):
+        return JSONResponse({"error": exc.code}, status_code=exc.status)
 
-  <script>
-    const healthEl = document.getElementById("health");
-    const button = document.getElementById("maskButton");
-    const sourceText = document.getElementById("sourceText");
-    const apiKey = document.getElementById("apiKey");
-    const errorEl = document.getElementById("error");
-    const maskedText = document.getElementById("maskedText");
-    const entitiesCount = document.getElementById("entitiesCount");
-    const modelUsed = document.getElementById("modelUsed");
-    const regexUsed = document.getElementById("regexUsed");
-    const entitiesTable = document.getElementById("entitiesTable");
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        # FastAPI's default errors echo rejected input; this API handles confidential input.
+        return JSONResponse(
+            {"error": "invalid_request", "types": sorted({e["type"] for e in exc.errors()})}, status_code=422
+        )
 
-    async function loadHealth() {
-      try {
-        const response = await fetch("/health");
-        const data = await response.json();
-        healthEl.textContent = `status=${data.status}, model_loaded=${data.model_loaded}, device=${data.device}`;
-      } catch {
-        healthEl.textContent = "Статус недоступен";
-      }
-    }
+    @application.exception_handler(Exception)
+    async def unexpected_error(request, exc):
+        return JSONResponse({"error": "processing_failed"}, status_code=500)
 
-    function renderEntities(entities) {
-      if (!entities.length) {
-        entitiesTable.innerHTML = '<tr><td colspan="4">Сущности не найдены.</td></tr>';
-        return;
-      }
-      entitiesTable.innerHTML = entities.map((entity) => `
-        <tr>
-          <td>${entity.type}</td>
-          <td>${entity.placeholder}</td>
-          <td>${entity.source}</td>
-          <td>${entity.start}-${entity.end}</td>
-        </tr>
-      `).join("");
-    }
+    @application.get("/health/live")
+    def live():
+        return {"status": "ok"}
 
-    async function maskText() {
-      button.disabled = true;
-      errorEl.hidden = true;
-      errorEl.textContent = "";
-      try {
-        const response = await fetch("/mask", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": apiKey.value,
-          },
-          body: JSON.stringify({
-            text: sourceText.value,
-            return_entities: true,
-            preserve_placeholders: true,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(JSON.stringify(data, null, 2));
+    @application.get("/health/ready")
+    def ready(request: Request):
+        return {"status": "ready" if hasattr(request.app.state, "engine") else "starting"}
+
+    @application.get("/v1/capabilities")
+    def capabilities(request: Request):
+        detector = request.app.state.engine
+        profiles = ["rules"]
+        if detector.rubert is not None:
+            profiles.append("rubert")
+        if detector.gliner is not None:
+            profiles.append("gliner")
+        if detector.rubert is not None and detector.gliner is not None:
+            profiles.append("hybrid")
+        return {
+            "profiles": profiles,
+            "default_profile": settings.default_profile,
+            "entities": [str(e) for e in EntityType],
+            "formats": ["txt", "docx", "xlsx", "pdf (requires pdf extra)"],
+            "ocr": False,
+            "unsupported_without_media_pipeline": ["BIOMETRIC_DATA"],
+            "dictionary_api": "/v1/dictionaries",
+            "max_document_chars": settings.max_document_chars,
+            "models": {
+                "rubert": settings.rubert_model if detector.rubert else None,
+                "gliner": settings.gliner_model if detector.gliner else None,
+            },
         }
-        maskedText.textContent = data.masked_text;
-        entitiesCount.textContent = data.stats.entities_count;
-        modelUsed.textContent = data.stats.model_used ? "да" : "нет";
-        regexUsed.textContent = data.stats.regex_used ? "да" : "нет";
-        renderEntities(data.entities || []);
-      } catch (error) {
-        errorEl.hidden = false;
-        errorEl.textContent = error.message;
-      } finally {
-        button.disabled = false;
-      }
-    }
 
-    button.addEventListener("click", maskText);
-    loadHealth();
-  </script>
-</body>
-</html>
-"""
+    @application.get("/v1/dictionaries")
+    def dictionaries(request: Request):
+        """List dictionary metadata. Terms are confidential and are never returned."""
+        return {"dictionaries": request.app.state.engine.dictionaries.list_metadata()}
 
-if settings.cors_enabled:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=list(settings.cors_origins) or ["http://localhost"],
-        allow_credentials=False,
-        allow_methods=["POST", "GET"],
-        allow_headers=["X-API-Key", "Content-Type"],
-    )
+    @application.put("/v1/dictionaries/{name}")
+    def replace_dictionary(request: Request, name: str, payload: DictionaryUpsert):
+        """Create or completely replace a dictionary. Use the entries endpoint to add terms."""
+        return request.app.state.engine.dictionaries.replace(name, payload)
 
+    @application.post("/v1/dictionaries/{name}/entries")
+    def append_dictionary_entries(request: Request, name: str, payload: DictionaryEntries):
+        return request.app.state.engine.dictionaries.append(name, payload)
 
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def index() -> HTMLResponse:
-    return HTMLResponse(INDEX_HTML.replace("__API_KEY__", escape(settings.api_key or "")))
+    def run_text(request, payload, analyze=False):
+        detector = request.app.state.engine
+        if len(payload.text) > settings.max_text_chars:
+            raise ServiceError("text_limit_exceeded", 413)
+        if not detector.gate.acquire(blocking=False):
+            raise ServiceError("inference_busy_retry_later", 429)
+        try:
+            result = detector.anonymize(payload.text, payload)
+            if analyze:
+                return result.model_dump(exclude={"text"})
+            return result
+        except ServiceError:
+            raise
+        except Exception as exc:
+            raise ServiceError("inference_failed", 503) from exc
+        finally:
+            detector.gate.release()
 
+    @application.post("/v1/anonymize", response_model=TextResponse)
+    def anonymize(request: Request, payload: TextRequest):
+        return run_text(request, payload)
 
-@app.get("/documents", response_class=HTMLResponse, include_in_schema=False)
-async def documents() -> HTMLResponse:
-    return HTMLResponse(DOCUMENTS_HTML.replace("__API_KEY__", escape(settings.api_key or "")))
+    @application.post("/v1/analyze")
+    def analyze(request: Request, payload: TextRequest):
+        return run_text(request, payload, analyze=True)
 
+    @application.post("/v1/documents", status_code=202)
+    async def documents(request: Request, file: UploadFile = File(...), options: str = Form("{}")):
+        try:
+            if len(options) > 64_000:
+                raise ServiceError("options_limit_exceeded", 413)
+            try:
+                parsed = DocumentOptions.model_validate_json(options)
+            except (ValidationError, ValueError) as exc:
+                raise ServiceError("invalid_document_options") from exc
+            kind = PurePath(file.filename or "").suffix.lower().lstrip(".")
+            if kind not in {"txt", "docx", "xlsx", "pdf"}:
+                raise ServiceError("unsupported_file_type", 415)
+            data = await file.read(settings.max_upload_mb * 1024**2 + 1)
+            if len(data) > settings.max_upload_mb * 1024**2:
+                raise ServiceError("upload_limit_exceeded", 413)
+            if not data:
+                raise ServiceError("empty_file")
+            job = request.app.state.jobs.submit(data, kind, parsed)
+            return {
+                **job,
+                "status_url": f"/v1/jobs/{job['id']}",
+                "result_url": f"/v1/jobs/{job['id']}/result",
+            }
+        finally:
+            await file.close()
 
-def validate_text_size(text: str, current_settings: Settings = settings) -> None:
-    if len(text) > current_settings.max_text_length:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Text is too large",
+    @application.get("/v1/jobs/{job_id}")
+    def job_status(request: Request, job_id: str):
+        return request.app.state.jobs.get(job_id).public()
+
+    @application.get("/v1/jobs/{job_id}/result")
+    def job_result(request: Request, job_id: str):
+        job = request.app.state.jobs.get(job_id)
+        if job.status != "succeeded":
+            raise ServiceError("job_result_not_available", 409)
+        return Response(
+            job.output,
+            media_type=job.report["output_mime"],
+            headers={"Content-Disposition": f'attachment; filename="{job.report["output_name"]}"'},
         )
 
+    @application.delete("/v1/jobs/{job_id}", status_code=204)
+    def delete_job(request: Request, job_id: str):
+        request.app.state.jobs.delete(job_id)
+        return Response(status_code=204)
 
-@app.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
-    return HealthResponse(status="ok", model_loaded=privacy_filter.model_loaded, device=settings.device)
-
-
-@app.post("/mask", response_model=MaskResponse, dependencies=[Depends(require_api_key)])
-async def mask(payload: MaskRequest, request: Request) -> MaskResponse:
-    validate_text_size(payload.text)
-    request_id = request.headers.get("X-Request-ID", str(uuid4()))
-    started = time.perf_counter()
-    response = masker.mask(
-        payload.text,
-        return_entities=payload.return_entities,
-        preserve_placeholders=payload.preserve_placeholders,
-        return_raw_entities=payload.return_raw_entities,
-    )
-    duration_ms = round((time.perf_counter() - started) * 1000, 2)
-    logger.info(
-        "mask_completed",
-        extra={
-            "request_id": request_id,
-            "text_length": len(payload.text),
-            "entities_count": response.stats.entities_count,
-            "entity_types": sorted({entity.type.value for entity in response.entities}),
-            "duration_ms": duration_ms,
-        },
-    )
-    return response
+    return application
 
 
-@app.post("/mask/batch", response_model=BatchMaskResponse, dependencies=[Depends(require_api_key)])
-async def mask_batch(payload: BatchMaskRequest, request: Request) -> BatchMaskResponse:
-    request_id = request.headers.get("X-Request-ID", str(uuid4()))
-    started = time.perf_counter()
-    items: list[BatchMaskItemResponse] = []
-    total_entities = 0
-    for item in payload.items:
-        validate_text_size(item.text)
-        result = masker.mask(
-            item.text,
-            return_entities=payload.return_entities,
-            preserve_placeholders=payload.preserve_placeholders,
-            return_raw_entities=payload.return_raw_entities,
-        )
-        total_entities += result.stats.entities_count
-        items.append(
-            BatchMaskItemResponse(
-                id=item.id,
-                masked_text=result.masked_text,
-                entities=result.entities if payload.return_entities else [],
-            )
-        )
-    duration_ms = round((time.perf_counter() - started) * 1000, 2)
-    logger.info(
-        "mask_batch_completed",
-        extra={
-            "request_id": request_id,
-            "text_length": sum(len(item.text) for item in payload.items),
-            "entities_count": total_entities,
-            "duration_ms": duration_ms,
-        },
-    )
-    return BatchMaskResponse(items=items)
+app = create_app()

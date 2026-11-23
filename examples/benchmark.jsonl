@@ -1,0 +1,1 @@
+{"text":"Почта: test@example.ru; ИНН 7707083893.","entities":[{"start":7,"end":22,"entity_type":"EMAIL"},{"start":28,"end":38,"entity_type":"INN"}]}

@@ -1,10 +1,10 @@
-.env
 .venv
-venv
+.git
+.env
+.cache
+models
+data
 __pycache__
 .pytest_cache
 .ruff_cache
-tests
-models
-vendor
-.git
+*.egg-info

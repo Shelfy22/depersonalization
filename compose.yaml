@@ -9,9 +9,13 @@ services:
     environment:
       HF_HOME: /models
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${ANON_BIND_ADDRESS:-127.0.0.1}:${ANON_HOST_PORT:-8000}:8000"
     volumes:
       - model-cache:/models
+      # Persistent confidential dictionaries. The application root stays read-only.
+      - dictionary-data:/state
+    networks:
+      - ai-net
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777
@@ -29,3 +33,11 @@ services:
 
 volumes:
   model-cache:
+  dictionary-data:
+
+networks:
+  # Create it once on the Docker host: docker network create ai-net
+  # n8n/LLM containers on this network use http://anonymizer:8000.
+  ai-net:
+    name: ${ANON_NETWORK_NAME:-ai-net}
+    external: true

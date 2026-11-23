@@ -47,6 +47,36 @@ GLiNER: добавьте `INSTALL_EXTRAS=gliner,pdf` и `ANON_ENABLE_GLINER=true
 образ и повторите шаг скачивания. Для GPU нужен отдельный CUDA-образ Torch и настройка GPU в Docker;
 поставляемый образ рассчитан на CPU.
 
+### Закрытый контур и общая сеть n8n
+
+На каждом новом Docker-хосте создайте локальный `.env` (он не попадает в Git):
+
+```powershell
+python scripts/init_env.py --docker
+```
+
+Затем пропишите в нём `ANON_NETWORK_NAME=ai-net`, `ANON_BIND_ADDRESS=127.0.0.1`,
+`ANON_DICTIONARY_PATH=/state/dictionaries.json`. Если запускается GLiNER, установите
+`INSTALL_EXTRAS=gliner,pdf` и `ANON_ENABLE_GLINER=true` **до** `docker compose build`.
+
+Один раз создайте внешнюю сеть, если её ещё нет:
+
+```powershell
+docker network inspect ai-net
+# если команда сообщила, что сети нет:
+docker network create ai-net
+```
+
+Контейнеры n8n и anonymizer, подключённые к этой сети, общаются по адресу
+`http://anonymizer:8000`; открывать порт сервиса наружу для этого не требуется. Текущая настройка
+публикует порт только на `127.0.0.1`; при полностью закрытом контуре можно удалить блок `ports`.
+Словари сохраняются в отдельном Docker volume `dictionary-data`, потому что сам контейнер намеренно
+запущен в режиме read-only.
+
+Веса моделей не лежат в Git. На хосте без доступа к Hugging Face их нужно заранее скачать на
+разрешённой машине в Docker volume или доставить подготовленный volume/образ через внутренний
+реестр. В закрытом контуре оставляйте `ANON_LOCAL_FILES_ONLY=true` и `HF_HUB_OFFLINE=1`.
+
 ## Локальный запуск (Python 3.11–3.13)
 
 ```powershell

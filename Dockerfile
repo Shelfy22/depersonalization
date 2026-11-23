@@ -9,7 +9,7 @@ COPY app ./app
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6,<3' \
     && pip install --no-cache-dir ".[${INSTALL_EXTRAS}]" \
     && useradd --create-home --uid 10001 service \
-    && mkdir /models && chown service:service /models
+    && mkdir /models /state && chown service:service /models /state
 COPY scripts ./scripts
 USER service
 EXPOSE 8000

@@ -205,32 +205,25 @@ def export_pdf_with_layout(data: bytes, extracted: Extracted, findings, masker: 
         document.set_metadata({key: "" for key in document.metadata})
 
         segment_start = 0
+        verification_regions: list[tuple[int, object, str]] = []
         for segment in extracted.segments:
             page = document[segment.location[0]]
             if page.first_annot or page.first_widget:
                 raise ServiceError("pdf_annotations_or_forms_require_separate_processing")
             segment_end = segment_start + len(segment.text)
-            groups: dict[tuple[str, str], tuple[str, list]] = {}
+            labels: list[tuple[object, str]] = []
             for finding in findings:
                 if finding.end <= segment_start or finding.start >= segment_end:
                     continue
                 start = max(0, finding.start - segment_start)
                 end = min(len(segment.text), finding.end - segment_start)
-                needle = segment.text[start:end]
-                if not needle.strip():
+                if not segment.text[start:end].strip():
                     continue
                 replacement = masker.replacement("\n".join(s.text for s in extracted.segments), finding)
-                key = (needle.casefold(), replacement)
-                groups.setdefault(key, (needle, []))[1].append(finding)
-
-            labels: list[tuple[object, str]] = []
-            for (_, replacement), (needle, _) in groups.items():
-                rectangles = page.search_for(needle)
-                if not rectangles:
-                    raise ServiceError("pdf_redaction_location_not_found")
-                for rectangle in rectangles:
+                for rectangle, words in _pdf_rectangles_for_span(page, segment.text, start, end):
                     page.add_redact_annot(rectangle, fill=(1, 1, 1), cross_out=False)
                     labels.append((rectangle, replacement))
+                    verification_regions.extend((page.number, rectangle, word) for word in words)
             if labels and not page.apply_redactions(images=0, graphics=0, text=0):
                 raise ServiceError("pdf_redaction_failed")
             for rectangle, replacement in labels:
@@ -241,15 +234,63 @@ def export_pdf_with_layout(data: bytes, extracted: Extracted, findings, masker: 
     finally:
         document.close()
 
-    # Confirm the removed sensitive values cannot be extracted from the output.
+    # Confirm the source text is absent from the exact redaction rectangles. A
+    # document-wide string check is unsafe: an equal word on another page may be
+    # non-sensitive or may be an independently missed entity, neither of which
+    # proves that this particular redaction failed.
     with fitz.open(stream=output, filetype="pdf") as cleaned:
-        visible_text = "\n".join(page.get_text("text", sort=True) for page in cleaned)
-    source = "\n".join(segment.text for segment in extracted.segments)
-    for finding in findings:
-        value = source[finding.start : finding.end]
-        if value and value in visible_text:
-            raise ServiceError("pdf_redaction_verification_failed")
+        for page_number, rectangle, word in verification_regions:
+            if word and word.casefold() in cleaned[page_number].get_textbox(rectangle).casefold():
+                raise ServiceError("pdf_redaction_verification_failed")
     return output
+
+
+def _pdf_rectangles_for_span(page, text: str, start: int, end: int):
+    """Map one text offset span to its own PDF word rectangles.
+
+    ``Page.search_for(value)`` returns *every* equal value on a page, losing the
+    occurrence selected by a detector.  The word extractor supplies coordinates
+    and reading order, so we align it with the exact text passed to the model and
+    redact only words overlapped by the selected character interval.  A partial
+    word is redacted as a whole word, which is fail-closed for PII.
+    """
+    word_spans = []
+    cursor = 0
+    for x0, y0, x1, y1, word, block, line, _ in page.get_text("words", sort=True):
+        offset = text.find(word, cursor)
+        if offset < 0:
+            raise ServiceError("pdf_coordinate_mapping_failed")
+        word_spans.append((offset, offset + len(word), (x0, y0, x1, y1), block, line, word))
+        cursor = offset + len(word)
+
+    selected = [span for span in word_spans if span[0] < end and span[1] > start]
+    if not selected:
+        raise ServiceError("pdf_redaction_location_not_found")
+
+    rectangles = []
+    current = None
+    current_words: list[str] = []
+    current_block_line = None
+    for _, _, coords, block, line, word in selected:
+        rectangle = page.rect.__class__(coords)
+        block_line = (block, line)
+        # Adjacent words on one rendered line form one readable replacement.
+        if (
+            current is not None
+            and block_line == current_block_line
+            and rectangle.x0 - current.x1 <= max(8.0, rectangle.height)
+        ):
+            current.include_rect(rectangle)
+            current_words.append(word)
+        else:
+            if current is not None:
+                rectangles.append((current, current_words))
+            current = rectangle
+            current_words = [word]
+            current_block_line = block_line
+    if current is not None:
+        rectangles.append((current, current_words))
+    return rectangles
 
 
 def _write_pdf_mask(page, rectangle, replacement: str):

@@ -5,9 +5,10 @@ import pytest
 from docx import Document
 from openpyxl import Workbook, load_workbook
 
-from app.documents import extract, process_document
+from app.documents import export_pdf_with_layout, extract, process_document
+from app.engine import Masker
 from app.errors import ServiceError
-from app.schemas import DocumentOptions
+from app.schemas import DocumentOptions, Finding
 
 
 def test_docx_split_runs_tables_headers_and_hidden_metadata(engine):
@@ -107,6 +108,31 @@ def test_pdf_preserves_page_layout_and_removes_sensitive_text(engine):
         assert cleaned.embfile_count() == 0
         assert cleaned.metadata["author"] != "private-author"
     assert report["counts"]["EMAIL"] == 2
+
+
+def test_pdf_redacts_only_the_detected_repeated_occurrence(engine):
+    """A detector offset must not make search_for redact every equal page value."""
+    fitz = pytest.importorskip("pymupdf")
+    original = fitz.open()
+    page = original.new_page()
+    page.insert_text((50, 50), "First: duplicate@example.ru")
+    page.insert_text((50, 90), "Second: duplicate@example.ru")
+    data = original.tobytes()
+    extracted = extract(data, "pdf", engine.settings)
+    source = "\n".join(segment.text for segment in extracted.segments)
+    value = "duplicate@example.ru"
+    finding = Finding(
+        start=source.index(value),
+        end=source.index(value) + len(value),
+        entity_type="EMAIL",
+        score=1,
+        sources=["test"],
+    )
+    output = export_pdf_with_layout(data, extracted, [finding], Masker())
+    with fitz.open(stream=output, filetype="pdf") as cleaned:
+        text = cleaned[0].get_text()
+    assert text.count(value) == 1
+    assert "[EMAIL_1]" in text
 
 
 def test_pdf_images_and_empty_pages_rejected(engine):

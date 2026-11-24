@@ -104,9 +104,13 @@ def extract_xlsx(data: bytes, settings: Settings):
         ):
             raise ServiceError("office_images_or_embeddings_require_separate_processing")
     workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=False, keep_links=False)
+    cached_workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True, keep_links=False)
     try:
         visited = 0
-        for sheet_index, sheet in enumerate(workbook.worksheets):
+        has_formulas = False
+        for sheet_index, (sheet, cached_sheet) in enumerate(
+            zip(workbook.worksheets, cached_workbook.worksheets, strict=True)
+        ):
             # Treat names as input text too, but never reuse them in output workbook metadata.
             result.add(sheet.title, (sheet_index, 0, 0), settings)
             # Declared dimensions are attacker controlled; never iterate a full XFD x 1M sheet.
@@ -118,11 +122,22 @@ def extract_xlsx(data: bytes, settings: Settings):
                     if visited > settings.max_cells:
                         raise ServiceError("workbook_cell_limit_exceeded", 413)
                     if cell.data_type == "f":
-                        raise ServiceError("formulas_require_values_only_workbook")
-                    if cell.value is not None:
-                        result.add(str(cell.value), (sheet_index, cell.row, cell.column), settings)
+                        has_formulas = True
+                        # The rebuilt result never contains formulas: they can contain
+                        # source values or external links that must not survive export.
+                        # Use an Excel-saved cached result when available instead.
+                        value = cached_sheet[cell.coordinate].value
+                        if value is None:
+                            raise ServiceError("formulas_require_cached_values")
+                    else:
+                        value = cell.value
+                    if value is not None:
+                        result.add(str(value), (sheet_index, cell.row, cell.column), settings)
+        if has_formulas:
+            result.warnings.append("formulas_replaced_with_cached_values")
     finally:
         workbook.close()
+        cached_workbook.close()
     return result
 
 

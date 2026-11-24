@@ -53,8 +53,27 @@ def test_xlsx_formulas_rejected(engine):
     workbook.active["A1"] = '=HYPERLINK("https://private.example.ru")'
     stream = io.BytesIO()
     workbook.save(stream)
-    with pytest.raises(ServiceError, match="formulas_require_values_only"):
+    with pytest.raises(ServiceError, match="formulas_require_cached_values"):
         process_document(stream.getvalue(), "xlsx", DocumentOptions(), engine)
+
+
+def test_xlsx_formulas_use_cached_values_and_do_not_export_formula(engine):
+    workbook = Workbook()
+    workbook.active["A1"] = "=1+2"
+    stream = io.BytesIO()
+    workbook.save(stream)
+    # openpyxl does not calculate formulas. Simulate an Excel-saved cached value.
+    cached = io.BytesIO()
+    with zipfile.ZipFile(stream) as source, zipfile.ZipFile(cached, "w", zipfile.ZIP_DEFLATED) as target:
+        for member in source.infolist():
+            content = source.read(member.filename)
+            if member.filename == "xl/worksheets/sheet1.xml":
+                content = content.replace(b"<f>1+2</f><v></v>", b"<f>1+2</f><v>3</v>")
+            target.writestr(member, content)
+    output, report = process_document(cached.getvalue(), "xlsx", DocumentOptions(output="document"), engine)
+    cleaned = load_workbook(io.BytesIO(output), data_only=False)
+    assert cleaned.active["A1"].value == "3"
+    assert "formulas_replaced_with_cached_values" in report["warnings"]
 
 
 def test_cross_paragraph_entity_uses_same_placeholder(engine):

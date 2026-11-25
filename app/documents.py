@@ -167,7 +167,7 @@ def extract_pdf(data: bytes, settings: Settings):
         for page in document:
             if page.get_images(full=True):
                 raise ServiceError("pdf_images_require_ocr_pipeline")
-            text = page.get_text("text", sort=True)
+            text, _ = _pdf_word_spans(page)
             if not text.strip():
                 raise ServiceError("pdf_empty_or_scanned_page_requires_ocr")
             result.add(text, (page.number,), settings)
@@ -264,19 +264,13 @@ def _pdf_rectangles_for_span(page, text: str, start: int, end: int):
     """Map one text offset span to its own PDF word rectangles.
 
     ``Page.search_for(value)`` returns *every* equal value on a page, losing the
-    occurrence selected by a detector.  The word extractor supplies coordinates
-    and reading order, so we align it with the exact text passed to the model and
-    redact only words overlapped by the selected character interval.  A partial
-    word is redacted as a whole word, which is fail-closed for PII.
+    occurrence selected by a detector. The same word sequence is used both for
+    extraction and here, so offsets cannot drift when a page repeats a value. A
+    partial word is redacted as a whole word, which is fail-closed for PII.
     """
-    word_spans = []
-    cursor = 0
-    for x0, y0, x1, y1, word, block, line, _ in page.get_text("words", sort=True):
-        offset = text.find(word, cursor)
-        if offset < 0:
-            raise ServiceError("pdf_coordinate_mapping_failed")
-        word_spans.append((offset, offset + len(word), (x0, y0, x1, y1), block, line, word))
-        cursor = offset + len(word)
+    extracted, word_spans = _pdf_word_spans(page)
+    if extracted != text:
+        raise ServiceError("pdf_coordinate_mapping_failed")
 
     selected = [span for span in word_spans if span[0] < end and span[1] > start]
     if not selected:
@@ -306,6 +300,31 @@ def _pdf_rectangles_for_span(page, text: str, start: int, end: int):
     if current is not None:
         rectangles.append((current, current_words))
     return rectangles
+
+
+def _pdf_word_spans(page):
+    """Return a stable page text and word-to-character-coordinate mapping.
+
+    PDF ``text`` and ``words`` extractors may use different spacing for columns,
+    repeated words and line wrapping. Building both detector input and redaction
+    mapping from ``words`` removes that ambiguous re-alignment step.
+    """
+    pieces: list[str] = []
+    spans = []
+    cursor = 0
+    previous_block_line = None
+    for x0, y0, x1, y1, word, block, line, _ in page.get_text("words", sort=True):
+        block_line = (block, line)
+        if previous_block_line is not None:
+            separator = " " if block_line == previous_block_line else "\n"
+            pieces.append(separator)
+            cursor += len(separator)
+        start = cursor
+        cursor += len(word)
+        pieces.append(word)
+        spans.append((start, cursor, (x0, y0, x1, y1), block, line, word))
+        previous_block_line = block_line
+    return "".join(pieces), spans
 
 
 def _write_pdf_mask(page, rectangle, replacement: str):
@@ -368,6 +387,7 @@ def process_document(data: bytes, kind: str, options: DocumentOptions, engine: D
     findings = engine.detect(source, options)
     masker = Masker(options.mode)
     masked_text = masker.apply(source, findings)
+    engine.assert_no_residual_structured_identifiers(masked_text, options)
     # Reconstruct cells/paragraphs using global findings, including spans crossing boundaries.
     masked_segments = []
     cursor = 0

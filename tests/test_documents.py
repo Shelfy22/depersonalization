@@ -154,6 +154,26 @@ def test_pdf_redacts_only_the_detected_repeated_occurrence(engine):
     assert "[EMAIL_1]" in text
 
 
+def test_pdf_redacts_every_detected_repeated_medical_value(engine):
+    fitz = pytest.importorskip("pymupdf")
+    original = fitz.open()
+    for page_number in range(2):
+        page = original.new_page()
+        page.insert_font(fontname="arial", fontfile="C:/Windows/Fonts/arial.ttf")
+        page.insert_text(
+            (50, 50),
+            f"Диагноз пациента {page_number + 1}: сахарный диабет второго типа.",
+            fontname="arial",
+        )
+    output, report = process_document(
+        original.tobytes(), "pdf", DocumentOptions(profile="rules", output="document"), engine
+    )
+    with fitz.open(stream=output, filetype="pdf") as cleaned:
+        text = "".join(page.get_text() for page in cleaned)
+    assert "сахарный диабет" not in text.casefold()
+    assert report["counts"]["MEDICAL_INFO"] == 2
+
+
 def test_pdf_images_and_empty_pages_rejected(engine):
     fitz = pytest.importorskip("pymupdf")
     document = fitz.open()

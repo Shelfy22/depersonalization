@@ -1,8 +1,9 @@
 import pytest
 
+from app.detectors import usable_model_span
 from app.engine import Masker, merge_findings
 from app.errors import ServiceError
-from app.rules import valid_card, valid_inn, valid_ogrn, valid_snils
+from app.rules import valid_card, valid_iin, valid_inn, valid_ogrn, valid_snils
 from app.schemas import Finding, Options
 
 
@@ -47,6 +48,7 @@ def test_invalid_model_offsets_fail_closed():
     [
         (valid_inn, "7707083893"),
         (valid_inn, "500100732259"),
+        (valid_iin, "870314300126"),
         (valid_snils, "112-233-445 95"),
         (valid_ogrn, "1027700132195"),
         (valid_card, "4111 1111 1111 1111"),
@@ -98,6 +100,39 @@ def test_contextual_russian_document_fields_are_masked(engine):
 def test_invalid_checksum_is_still_masked_when_contextual(engine):
     assert "7707083894" not in engine.anonymize("ИНН 7707083894", Options()).text
     assert engine.anonymize("номер 7707083894", Options(entities=["INN"])).findings == []
+
+
+def test_structured_identifiers_cover_pdf_linebreaks_and_contextual_invalid_values(engine):
+    text = (
+        "ИИН: 920822400567. СНИЛС: 234-\n567-890 11. "
+        "Шаблон BIO-FACE-78412. Внутренний идентификатор USER-78125."
+    )
+    result = engine.anonymize(text, Options(profile="rules"))
+    for value in ["920822400567", "234-\n567-890 11", "BIO-FACE-78412", "USER-78125"]:
+        assert value not in result.text
+    assert result.counts["IIN"] == 1
+    assert result.counts["SNILS"] == 1
+    assert result.counts["BIOMETRIC_ID"] == 1
+    assert result.counts["EMPLOYEE_ID"] == 1
+
+
+def test_medical_condition_and_business_data_policy(engine):
+    text = "Диагноз: сахарный диабет второго типа. Показатель за 2кв составляет 195 855,00. Оклад: 100 000 ₽."
+    result = engine.anonymize(text, Options(profile="rules"))
+    assert "сахарный диабет второго типа" not in result.text
+    assert "195 855,00" in result.text
+    assert "100 000 ₽" not in result.text
+
+
+def test_model_context_filters_preserve_business_location_and_player():
+    assert not usable_model_span("ADDRESS", "Республика Адыгея", "Регион — Республика Адыгея", 9, 27)
+    assert usable_model_span(
+        "ADDRESS", "Республика Адыгея", "Адрес проживания: Республика Адыгея", 18, 36
+    )
+    assert not usable_model_span("PERSON", "Лунда", "Игрок — Лунда", 8, 13)
+    assert not usable_model_span(
+        "FINANCIAL_AMOUNT", "195 855,00", "Показатель за 2кв: 195 855,00", 20, 30
+    )
 
 
 def test_contextual_extended_categories_are_masked(engine):

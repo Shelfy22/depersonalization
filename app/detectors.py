@@ -6,6 +6,7 @@ from presidio_analyzer import EntityRecognizer, RecognizerResult
 
 from app.config import Settings
 from app.errors import ServiceError
+from app.rules import is_address_context, is_business_amount_context, is_business_person_field
 
 RUBERT_LABELS = {
     **dict.fromkeys(["FIRST_NAME", "LAST_NAME", "MIDDLE_NAME", "PER", "PERSON"], "PERSON"),
@@ -31,6 +32,7 @@ GLINER_LABELS = {
     "email": "EMAIL",
     "phone number": "PHONE",
     "tax identification number": "INN",
+    "individual identification number": "IIN",
     "social security number": "SNILS",
     "passport number": "PASSPORT",
     "bank account number": "BANK_ACCOUNT",
@@ -53,8 +55,10 @@ GLINER_LABELS = {
     "income": "FINANCIAL_AMOUNT",
     "debt": "FINANCIAL_AMOUNT",
     "medical information": "MEDICAL_INFO",
+    "medical condition": "MEDICAL_INFO",
     "geolocation": "GEOLOCATION",
     "biometric data": "BIOMETRIC_DATA",
+    "biometric identifier": "BIOMETRIC_ID",
     "company registration number": "OGRN",
     "individual entrepreneur registration number": "OGRNIP",
 }
@@ -104,21 +108,22 @@ class RubertRecognizer(EntityRecognizer):
             # Token-aware overlapping windows inside every bounded character block.
             for item in self.pipe(chunk, stride=128, batch_size=1):
                 kind = RUBERT_LABELS.get(item["entity_group"])
-                value = item["word"]
+                start, end = int(item["start"]), int(item["end"])
+                value = text[start:end]
                 if (
                     kind in entities
                     and float(item["score"]) >= self.settings.rubert_threshold
-                    and usable_model_span(kind, value)
+                    and usable_model_span(kind, value, text, start, end)
                 ):
                     results.append(
                         RecognizerResult(
-                            kind, offset + item["start"], offset + item["end"], float(item["score"])
+                            kind, offset + start, offset + end, float(item["score"])
                         )
                     )
         return results
 
 
-def usable_model_span(kind: str | None, value: str) -> bool:
+def usable_model_span(kind: str | None, value: str, text: str = "", start: int = 0, end: int = 0) -> bool:
     """Reject fragments that cannot safely be redacted as standalone entities.
 
     Token classifiers may label an isolated abbreviation such as ``г`` as a city
@@ -127,9 +132,11 @@ def usable_model_span(kind: str | None, value: str) -> bool:
     """
     compact = re.sub(r"[^\w]", "", value, flags=re.UNICODE)
     if kind == "PERSON":
-        return sum(char.isalpha() for char in compact) >= 2
+        return sum(char.isalpha() for char in compact) >= 2 and not is_business_person_field(text, start)
     if kind == "ADDRESS":
-        return len(compact) >= 3
+        return len(compact) >= 3 and is_address_context(text, start, end, value)
+    if kind == "FINANCIAL_AMOUNT":
+        return bool(compact) and not is_business_amount_context(text, start, end)
     return bool(compact)
 
 
@@ -196,9 +203,13 @@ class GlinerRecognizer(EntityRecognizer):
                     chunk, group, threshold=self.settings.gliner_threshold
                 ):
                     kind = label_map[item["label"]]
+                    start, end = offset + item["start"], offset + item["end"]
+                    value = text[start:end]
+                    if kind != "CUSTOM" and not usable_model_span(kind, value, text, start, end):
+                        continue
                     results.append(
                         RecognizerResult(
-                            kind, offset + item["start"], offset + item["end"], float(item["score"])
+                            kind, start, end, float(item["score"])
                         )
                     )
         return results

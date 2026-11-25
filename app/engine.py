@@ -146,10 +146,18 @@ class DetectionEngine:
             warnings.append("rules_only_does_not_detect_names_or_addresses")
         if any(f.entity_type == "SENSITIVE" for f in findings):
             warnings.append("overlapping_entity_types_masked_as_union")
+        anonymized_text = (masker or Masker(options.mode)).apply(text, findings)
+        self.assert_no_residual_structured_identifiers(anonymized_text, options)
         return TextResponse(
-            text=(masker or Masker(options.mode)).apply(text, findings),
+            text=anonymized_text,
             findings=findings,
             counts=dict(Counter(f.entity_type for f in findings)),
             profile=self.resolve(options),
             warnings=warnings,
         )
+
+    def assert_no_residual_structured_identifiers(self, text: str, options: Options) -> None:
+        """Fail closed if a selected high-confidence identifier remains after masking."""
+        audited = {"IIN", "SNILS", "BIOMETRIC_ID", "EMPLOYEE_ID"} & {str(item) for item in options.entities}
+        if self.rules.analyze(text, list(audited), None):
+            raise ServiceError("residual_structured_identifier_detected", 422)

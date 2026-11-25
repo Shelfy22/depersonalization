@@ -27,6 +27,18 @@ def valid_inn(value: str) -> bool:
     )
 
 
+def valid_iin(value: str) -> bool:
+    """Kazakh Individual Identification Number checksum (12 digits)."""
+    n = digits(value)
+    if len(n) != 12 or len(set(n)) <= 1:
+        return False
+    first = sum(int(c) * weight for c, weight in zip(n[:11], range(1, 12), strict=True)) % 11
+    if first != 10:
+        return first == int(n[11])
+    second = sum(int(c) * weight for c, weight in zip(n[:11], [3, 4, 5, 6, 7, 8, 9, 10, 11, 1, 2], strict=True)) % 11
+    return second != 10 and second == int(n[11])
+
+
 def valid_snils(value: str) -> bool:
     n = digits(value)
     if len(n) != 11 or len(set(n)) <= 1:
@@ -72,6 +84,31 @@ class Rule:
     validator: Callable[[str], bool] | None = None
     context: str | None = None
     group: int = 0
+    context_window: int = 120
+
+
+PERSONAL_FINANCE_CONTEXT = re.compile(r"оклад|зарплат\w*|личн\w*\s+(?:доход|кредит|долг)|доход\w*\s+сотрудник|задолженн\w*\s+сотрудник", re.IGNORECASE)
+BUSINESS_AMOUNT_CONTEXT = re.compile(r"(?:\d\s*)?кв(?:артал)?\d*|показател\w*|выручк\w*|бюджет\w*|план\w*|аналитическ\w*|коммерческ\w*|продаж\w*|оборот\w*", re.IGNORECASE)
+ADDRESS_CONTEXT = re.compile(r"адрес\w*\s+(?:проживани\w*|регистраци\w*)|место\s+проживани\w*|проживает\w*\s+по\s+адрес", re.IGNORECASE)
+ADDRESS_COMPONENT = re.compile(r"\b(?:ул\.?|улиц\w*|просп\w*|переул\w*|шосс\w*|дом|д\.|квартир\w*|кв\.?|корп\w*|строен\w*|индекс)\b|\b\d{5,6}\b", re.IGNORECASE)
+BUSINESS_PERSON_FIELD = re.compile(r"(?:игрок|цкг|категори[яи]|территори[яи]|дивизион)\s*[:—-]?\s*$", re.IGNORECASE)
+
+
+def local_context(text: str, start: int, end: int, radius: int = 120) -> str:
+    return text[max(0, start - radius) : min(len(text), end + radius)]
+
+
+def is_business_amount_context(text: str, start: int, end: int) -> bool:
+    context = local_context(text, start, end)
+    return bool(BUSINESS_AMOUNT_CONTEXT.search(context) and not PERSONAL_FINANCE_CONTEXT.search(context))
+
+
+def is_address_context(text: str, start: int, end: int, value: str) -> bool:
+    return bool(ADDRESS_CONTEXT.search(local_context(text, start, end)) or ADDRESS_COMPONENT.search(value))
+
+
+def is_business_person_field(text: str, start: int) -> bool:
+    return bool(BUSINESS_PERSON_FIELD.search(text[max(0, start - 80) : start]))
 
 
 RULES = [
@@ -82,12 +119,14 @@ RULES = [
     Rule("PHONE", r"(?<!\w)(?:\+7|8)[ \t(.-]*\d{3}[ \t).-]*\d{3}[ \t.-]*\d{2}[ \t.-]*\d{2}(?!\d)", 0.9),
     Rule("PHONE", r"(?:тел(?:ефон)?\.?|моб\.?)\s*[:=]?\s*(\+?\d[\d ()-]{5,23}\d)", group=1),
     Rule("INN", r"(?<!\d)(?:\d{12}|\d{10})(?!\d)", 0.99, valid_inn, r"инн"),
+    Rule("IIN", r"(?<!\d)\d{12}(?!\d)", 0.99, valid_iin, r"иин"),
     Rule(
         "SNILS",
-        r"(?<!\d)\d{3}[ -]?\d{3}[ -]?\d{3}[ -]?\d{2}(?!\d)",
+        r"(?<!\d)\d{3}[\s\u00a0-]*\d{3}[\s\u00a0-]*\d{3}[\s\u00a0-]*\d{2}(?!\d)",
         0.99,
         valid_snils,
         r"снилс|страхов\w*\s+свидетельств",
+        context_window=200,
     ),
     Rule("OGRN", r"(?<!\d)\d{13}(?!\d)", 0.99, valid_ogrn, r"огрн(?!ип)"),
     Rule("OGRNIP", r"(?<!\d)\d{15}(?!\d)", 0.99, valid_ogrn, r"огрнип"),
@@ -125,6 +164,8 @@ RULES = [
         0.98,
         group=1,
     ),
+    Rule("EMPLOYEE_ID", r"(?<![A-Z0-9])(?:USER|HR|EMP)[-_]\d{3,12}(?![A-Z0-9])", 0.99),
+    Rule("BIOMETRIC_ID", r"(?<![A-Z0-9])BIO-(?:FACE|VOICE|FINGER)-\d{4,12}(?![A-Z0-9])", 0.99),
     # These categories only match an explicit Russian context.  They intentionally
     # do not attempt to hide every date, amount, organisation or place name.
     Rule(
@@ -163,6 +204,7 @@ RULES = [
         0.93,
         group=1,
     ),
+    Rule("MEDICAL_INFO", r"\bсахарн\w*\s+диабет\w*(?:\s+(?:первого|второго)\s+типа)?\b", 0.97),
     Rule(
         "GEOLOCATION",
         r"(?:геолокаци\w*|координат\w*|местоположени\w*)[^0-9-]{0,35}(-?\d{1,2}\.\d{3,8}\s*[,;]\s*-?\d{1,3}\.\d{3,8})",
@@ -187,10 +229,14 @@ class RussianRulesRecognizer(EntityRecognizer):
                 continue
             for match in pattern.finditer(text):
                 value = match.group(rule.group)
-                context = text[max(0, match.start() - 45) : match.start()]
+                context = text[max(0, match.start() - rule.context_window) : match.start()]
                 contextual = bool(rule.context and re.search(rule.context, context, re.IGNORECASE))
                 valid = rule.validator(value) if rule.validator else not rule.context
                 if not valid and not contextual:
+                    continue
+                if rule.kind == "FINANCIAL_AMOUNT" and is_business_amount_context(
+                    text, *match.span(rule.group)
+                ):
                     continue
                 score = rule.score if valid else 0.65
                 results.append(RecognizerResult(rule.kind, *match.span(rule.group), score))
